@@ -13,8 +13,7 @@ Manages a managed Kubernetes Cluster (AKS)
 ~> **Note:** All arguments including the client secret will be stored in the raw state as plain-text.
 [Read more about sensitive data in state](/docs/state/sensitive-data.html).
 
-
-## Example Usage
+## Example Usage - Basic
 
 ```hcl
 resource "azurerm_resource_group" "test" {
@@ -79,6 +78,99 @@ output "host" {
 }
 ```
 
+## Example Usage - Advanced Networking
+
+```hcl
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG1"
+  location = "East US"
+}
+
+resource azurerm_network_security_group "test_advanced_network" {
+  name                = "akc-1-nsg"
+  location            = "East US"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+}
+
+resource "azurerm_virtual_network" "test_advanced_network" {
+  name                = "akc-1-vnet"
+  location            = "East US"
+  resource_group_name = "${azurerm_resource_group.test.name}"
+  address_space       = ["10.1.0.0/16"]
+}
+
+resource "azurerm_subnet" "test_subnet" {
+  name                      = "akc-1-subnet"
+  resource_group_name       = "${azurerm_resource_group.test.name}"
+  network_security_group_id = "${azurerm_network_security_group.test_advanced_network.id}"
+  address_prefix            = "10.1.0.0/24"
+  virtual_network_name      = "${azurerm_virtual_network.test_advanced_network.name}"
+}
+
+resource "azurerm_kubernetes_cluster" "test" {
+  name       = "akc-1"
+  location   = "East US"
+  dns_prefix = "akc-1"
+
+  resource_group_name = "${azurerm_resource_group.test.name}"
+
+  linux_profile {
+    admin_username = "acctestuser1"
+
+    ssh_key {
+      key_data = "ssh-rsa ..."
+    }
+  }
+
+  agent_pool_profile {
+    name    = "agentpool"
+    count   = "2"
+    vm_size = "Standard_DS2_v2"
+    os_type = "Linux"
+
+    # Required for advanced networking
+    vnet_subnet_id = "${azurerm_subnet.test_subnet.id}"
+  }
+
+  service_principal {
+    client_id     = "00000000-0000-0000-0000-000000000000"
+    client_secret = "00000000000000000000000000000000"
+  }
+
+  network_profile {
+    network_plugin     = "azure"
+    dns_service_ip     = "10.0.0.10"
+    docker_bridge_cidr = "172.17.0.1/16"
+    service_cidr       = "10.0.0.0/16"
+  }
+}
+
+output "subnet_id" {
+  value = "${azurerm_kubernetes_cluster.test.agent_pool_profile.0.vnet_subnet_id}"
+}
+
+output "network_plugin" {
+  value = "${azurerm_kubernetes_cluster.test.network_profile.0.network_plugin}"
+}
+
+output "service_cidr" {
+  value = "${azurerm_kubernetes_cluster.test.network_profile.0.service_cidr}"
+}
+
+output "dns_service_ip" {
+  value = "${azurerm_kubernetes_cluster.test.network_profile.0.dns_service_ip}"
+}
+
+output "docker_bridge_cidr" {
+  value = "${azurerm_kubernetes_cluster.test.network_profile.0.docker_bridge_cidr}"
+}
+
+output "pod_cidr" {
+  value = "${azurerm_kubernetes_cluster.test.network_profile.0.pod_cidr}"
+}
+
+```
+
 ## Argument Reference
 
 The following arguments are supported:
@@ -99,6 +191,8 @@ The following arguments are supported:
 
 * `service_principal` - (Required) A Service Principal block as documented below.
 
+* `network_profile` - (Optional) A Network Profile block as documented below.
+
 * `tags` - (Optional) A mapping of tags to assign to the resource.
 
 `linux_profile` supports the following:
@@ -117,12 +211,27 @@ The following arguments are supported:
 * `vm_size` - (Required) The size of each VM in the Agent Pool (e.g. `Standard_F1`). Changing this forces a new resource to be created.
 * `os_disk_size_gb` - (Optional) The Agent Operating System disk size in GB. Changing this forces a new resource to be created.
 * `os_type` - (Optional) The Operating System used for the Agents. Possible values are `Linux` and `Windows`.  Changing this forces a new resource to be created. Defaults to `Linux`.
-* `vnet_subnet_id` - (Optional) The ID of the Subnet where the Agents in the Pool should be provisioned. Changing this forces a new resource to be created.
+* ``vnet_subnet_id`` - (Optional) The ID of the Subnet where the Agents in the Pool should be provisioned. Changing this forces a new resource to be created.
 
 `service_principal` supports the following:
 
 * `client_id` - (Required) The Client ID for the Service Principal.
 * `client_secret` - (Required) The Client Secret for the Service Principal.
+
+`network_profile` supports the following:
+
+* `network_plugin` - (Required) Network plugin to use for networking. Currently supported values are 'azure' and 'kubenet'. Changing this forces a new resource to be created.
+
+-> **NOTE:** When `network_plugin` is set to `azure` - the `vnet_subnet_id` field in the `agent_pool_profile` block must be set.
+
+* `service_cidr` - (Required) Network range used by the Kubernetes service.  Changing this forces a new resource to be created. *Note: This range should not be used by any network element on or connected to this VNet. Service address CIDR must be smaller than /12.*
+* `dns_service_ip` - (Required) IP address within the Kubernetes service address range that will be used by cluster service discovery (kube-dns).  Changing this forces a new resource to be created.
+* `docker_bridge_cidr` - (Optional) IP address (in CIDR notation) used as the Docker bridge IP address on nodes. Default: 172.17.0.1/16.  Changing this forces a new resource to be created.
+* `pod_cidr` - (Optional) The CIDR to use for pod IP addresses. Default: 10.244.0.0/24. Changing this forces a new resource to be created.
+
+
+
+[**Find out more about AKS Advanced Networking**](https://docs.microsoft.com/en-us/azure/aks/networking-overview#advanced-networking)
 
 ## Attributes Reference
 
